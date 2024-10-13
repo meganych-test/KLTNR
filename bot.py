@@ -95,14 +95,14 @@ def place_order(pair, order_type, amount=None):
                 return None, f"Order not placed: Notional value {notional_value:.2f} is below the minimum required {min_notional:.2f} for {pair}."
 
             order = binance.create_market_buy_order(pair, amount)
-            message = f"Placed BUY order for {amount} {pair} (${notional_value:.2f}) at {order['average']:.2f}."
+            message = f"RNDR BUY order for {amount} {pair} (${notional_value:.2f}) at {order['average']:.2f}."
         elif order_type == 'sell':
             balance = binance.fetch_balance()
             position_size = balance[pair.split('/')[0]]['free']
             print(f"Current position size for {pair}: {position_size}")
 
             order = binance.create_market_sell_order(pair, position_size)
-            message = f"Placed SELL order for entire position of {position_size} {pair} at {order['average']:.2f}."
+            message = f"RNDR SELL order for entire position of {position_size} {pair} at {order['average']:.2f}."
 
         return order, message
     except Exception as e:
