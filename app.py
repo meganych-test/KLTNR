@@ -23,7 +23,7 @@ binance = ccxt.binance({
 })
 
 # Define trading parameters
-TRADING_PAIRS = ['FTT/USDT', 'SHIB/USDT', 'PEPE/USDT', 'TIA/USDT']
+TRADING_PAIRS = ['FTT/USDT', 'DOGE/USDT', 'PEPE/USDT', 'TIA/USDT']
 RSI_PERIOD = 10
 EMA_PERIOD = 10
 ATR_PERIOD = 14
@@ -43,6 +43,7 @@ markets = binance.load_markets()
 min_notional_values = {pair: market['limits']['cost']['min'] for pair, market in markets.items() if
                        pair in TRADING_PAIRS}
 
+
 # Function to send messages to Telegram
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -54,6 +55,7 @@ def send_telegram_message(message):
         requests.post(url, json=payload)
     except Exception as e:
         print(f"Failed to send message to Telegram: {e}")
+
 
 # Function to fetch the historical price data and calculate RSI and Keltner Channel
 def fetch_data(pair):
@@ -76,26 +78,32 @@ def fetch_data(pair):
 
     return round(rsi, 2), round(ema, 8), round(upper_band, 8), round(lower_band, 8)
 
+
 # Function to place orders
-def place_order(pair, order_type, amount):
+def place_order(pair, order_type, amount=None):
     try:
         current_price = binance.fetch_ticker(pair)['last']
-        notional_value = current_price * amount
-
-        if notional_value < min_notional_values[pair]:
-            return None, f"Order not placed: Notional value {notional_value:.2f} is below the minimum required for {pair}."
 
         if order_type == 'buy':
+            notional_value = current_price * amount
+            if notional_value < min_notional_values[pair]:
+                return None, f"Order not placed: Notional value {notional_value:.2f} is below the minimum required for {pair}."
             order = binance.create_market_buy_order(pair, amount)
             message = f"Placed BUY order for ${amount} {pair} at {order['average']:.2f}."
-            return order, message
         elif order_type == 'sell':
-            order = binance.create_market_sell_order(pair, amount)
-            message = f"Placed SELL order for ${amount} {pair} at {order['average']:.2f}."
-            return order, message
+            # Fetch the current position size
+            balance = binance.fetch_balance()
+            position_size = balance[pair.split('/')[0]]['free']
+
+            # Place a market sell order for the entire position
+            order = binance.create_market_sell_order(pair, position_size)
+            message = f"Placed SELL order for entire position of {position_size} {pair} at {order['average']:.2f}."
+
+        return order, message
     except Exception as e:
         print(f"An error occurred while placing {order_type} order: {e}")
         return None, f"Error placing {order_type} order: {e}"
+
 
 # Function to set take profit
 def set_take_profit(entry_price, order_type):
@@ -107,14 +115,17 @@ def set_take_profit(entry_price, order_type):
         return None
     return tp_price
 
+
 # Function to check for open positions
 def check_open_positions(pair):
     positions = binance.fetch_open_orders(pair)
     return positions
 
+
 # Function to calculate safety order drop
 def calculate_safety_order_drop(order_number):
     return INITIAL_SAFETY_ORDER_DROP * (2 ** order_number)
+
 
 # Function to calculate safety order amount based on the strategy
 def calculate_safety_order_amount(order_number):
@@ -122,6 +133,7 @@ def calculate_safety_order_amount(order_number):
         return FIRST_SAFETY_ORDER_AMOUNT
     else:
         return FIRST_SAFETY_ORDER_AMOUNT * (SAFETY_ORDER_MULTIPLIER ** (order_number - 1))
+
 
 # Main trading loop
 def main():
@@ -172,7 +184,8 @@ def main():
 
                 # Check for buy signal based on both RSI < 30 and price below lower Keltner Channel
                 if rsi <= 30 and current_price < lower_band and positions[pair] is None:
-                    print(f"\033[92mCondition to BUY for {pair}: met (RSI: {rsi}, Price: {current_price} < Lower Band: {lower_band})\033[0m")
+                    print(
+                        f"\033[93mCondition to BUY for {pair}: met (RSI: {rsi}, Price: {current_price} < Lower Band: {lower_band})\033[0m")
                     # Place the first buy order
                     order, message = place_order(pair, 'buy', INITIAL_TRADE_AMOUNT)
 
@@ -188,7 +201,8 @@ def main():
                     message += f" TP set @ {tp_price:.8f}."
                     send_telegram_message(message)
                 else:
-                    print(f"\033[91mCondition to BUY for {pair}: not met (RSI: {rsi}, Price: {current_price} >= Lower Band: {lower_band})\033[0m")
+                    print(
+                        f"\033[94mCondition to BUY for {pair}: not met (RSI: {rsi}, Price: {current_price} >= Lower Band: {lower_band})\033[0m")
 
                 # Check for sell signal or safety orders
                 if positions[pair] is not None:
@@ -197,15 +211,18 @@ def main():
 
                     # Check if profit target is met
                     if current_price >= take_profits[pair]:
-                        print(f"\033[92mCondition to SELL for {pair}: met (Price: {current_price} >= Take Profit: {take_profits[pair]})\033[0m")
-                        order, message = place_order(pair, 'sell', positions[pair]['filled'])
+                        print(
+                            f"\033[92mCondition to SELL for {pair}: met (Price: {current_price} >= Take Profit: {take_profits[pair]})\033[0m")
+                        order, message = place_order(pair,
+                                                     'sell')  # No need to pass amount, it will sell entire position
 
                         # Handle case where sell order fails
                         if order is None:
                             send_telegram_message(message)
                             continue
 
-                        profit = (current_price - purchase_price) * positions[pair]['filled']
+                        profit = (current_price - purchase_price) * order[
+                            'amount']  # Calculate profit based on the sold amount
                         capital += profit  # Reinvest the profit by adding it to capital
                         positions[pair] = None
                         take_profits[pair] = None
@@ -213,7 +230,8 @@ def main():
                         message += f" Profit: ${profit:.2f}. Total capital: ${capital:.2f}."
                         send_telegram_message(message)
                     else:
-                        print(f"\066[91mCondition to SELL for {pair}: not met (Price: {current_price} < Take Profit: {take_profits[pair]})\066[0m")
+                        print(
+                            f"\033[94mCondition to SELL for {pair}: not met (Price: {current_price} < Take Profit: {take_profits[pair]})\033[0m")
 
                     # Implement safety orders with doubling drop percentage
                     safety_order_number = len(safety_orders[pair])
@@ -246,6 +264,7 @@ def main():
                 print(f"An error occurred for {pair}: {e}")
 
         time.sleep(60)  # Wait for the next interval
+
 
 if __name__ == '__main__':
     main()
